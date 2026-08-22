@@ -1,5 +1,9 @@
 name: docker-jupyter
 
+secrets:
+  cloudflare_tunnel_token:
+    file: "${CLOUDFLARE_TUNNEL_TOKEN_FILE:-./secrets/cloudflare-tunnel-token}"
+
 services:
   jupyter:
     build:
@@ -41,3 +45,15 @@ services:
               count: 1
               capabilities:
                 - gpu
+
+  cloudflared:
+    image: "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
+    secrets:
+      - cloudflare_tunnel_token
+    depends_on:
+      jupyter:
+        condition: service_started

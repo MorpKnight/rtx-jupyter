@@ -16,3 +16,8 @@ checkpoints/
 **/.codex/
 auth.json
 **/auth.json
+
+secrets/
+**/secrets/
+cloudflare-tunnel-token
+**/cloudflare-tunnel-token
