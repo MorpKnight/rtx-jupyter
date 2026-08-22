@@ -75,3 +75,5 @@ RUN python -m pip install --no-cache-dir \
 USER root
 
 ENTRYPOINT ["tini", "--", "/bin/bash", "-c", "set -e; target_uid=\"$(id -u jovyan)\"; target_gid=\"$(id -g jovyan)\"; mkdir -p \"$CODEX_HOME\"; chown -R \"${target_uid}:${target_gid}\" \"$CODEX_HOME\"; chmod -R u+rwX \"$CODEX_HOME\"; exec gosu jovyan \"$@\"", "--"]
+
+CMD ["start-notebook.py"]
