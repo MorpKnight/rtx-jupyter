@@ -3,6 +3,8 @@
 !.env.example
 
 data/
+workspace/
+state/
 models/
 datasets/
 checkpoints/

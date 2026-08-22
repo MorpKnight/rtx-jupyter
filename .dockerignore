@@ -8,6 +8,10 @@
 
 data/
 **/data/
+workspace/
+**/workspace/
+state/
+**/state/
 models/
 datasets/
 checkpoints/

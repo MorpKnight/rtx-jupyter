@@ -12,6 +12,7 @@ services:
     image: "${IMAGE_NAME:-giovan/jupyter-gpu:cu128}"
     container_name: docker-jupyter
     restart: unless-stopped
+    user: root
 
     # Bind the published port only to the host's Tailscale IPv4 address.
     # Compose stops with a clear error when TAILSCALE_IP is not configured.
@@ -19,6 +20,14 @@ services:
       - "${TAILSCALE_IP:?Set TAILSCALE_IP in .env}:8888:8888"
 
     environment:
+      # start.sh maps jovyan to the host UID/GID, fixes only mount roots, and
+      # drops privileges before starting Jupyter. GRANT_SUDO is not enabled.
+      NB_USER: jovyan
+      NB_UID: "${NB_UID:-1000}"
+      NB_GID: "${NB_GID:-1000}"
+      CHOWN_HOME: "yes"
+      CHOWN_EXTRA: /home/jovyan/work,/mnt/data,/home/jovyan/.codex
+
       JUPYTER_ENABLE_LAB: "yes"
       JUPYTER_TOKEN: "${JUPYTER_TOKEN:?Set JUPYTER_TOKEN in .env}"
 
@@ -31,9 +40,21 @@ services:
       CODEX_HOME: /home/jovyan/.codex
 
     volumes:
-      - "${PROJECT_ROOT:-/home/giovan/docker-jupyter}:/home/jovyan/work"
-      - "${DATA_ROOT:-/mnt/data/giovan/docker-jupyter}:/mnt/data"
-      - "${CODEX_ROOT:-/mnt/data/giovan/docker-jupyter/codex}:/home/jovyan/.codex"
+      - type: bind
+        source: "${WORKSPACE_ROOT:-./workspace}"
+        target: /home/jovyan/work
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${DATA_ROOT:-./data}"
+        target: /mnt/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${CODEX_ROOT:-./state/codex}"
+        target: /home/jovyan/.codex
+        bind:
+          create_host_path: false
 
     working_dir: /home/jovyan/work
 

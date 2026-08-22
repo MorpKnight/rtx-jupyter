@@ -1,7 +1,7 @@
 FROM quay.io/jupyter/pytorch-notebook:82d322f00937
 
-# Install OS-level tools as root. The entrypoint later drops the service to
-# jovyan for runtime.
+# Install OS-level tools as root. Runtime privilege dropping is handled by the
+# inherited Jupyter Docker Stacks entrypoint.
 USER root
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -10,7 +10,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        gosu \
         nvtop \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,16 +19,13 @@ USER jovyan
 
 # Install Codex in the image, but keep its account state outside the image.
 # CODEX_HOME is bind-mounted by Compose at runtime.
-ENV PATH="/home/jovyan/.local/bin:${PATH}" \
-    CODEX_HOME="/home/jovyan/.codex"
+ENV CODEX_HOME="/home/jovyan/.codex"
 
 RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh \
-    && command -v codex \
-    && codex --version
+    && /home/jovyan/.local/bin/codex --version
 
-# The standalone installer keeps the Codex package below CODEX_HOME. Since
-# Compose bind-mounts /home/jovyan/.codex for persistent auth/configuration,
-# move the installed package outside that mount and recreate the PATH link.
+# The standalone installer keeps the Codex package below CODEX_HOME. Move the
+# package into the immutable image so a CODEX_HOME bind mount cannot hide it.
 USER root
 
 RUN set -eux; \
@@ -39,13 +35,12 @@ RUN set -eux; \
         *) echo "Unexpected Codex target: $codex_target" >&2; exit 1 ;; \
     esac; \
     codex_relative="${codex_target#/home/jovyan/.codex/}"; \
-    jovyan_uid="$(id -u jovyan)"; \
-    jovyan_gid="$(id -g jovyan)"; \
-    install -d -o "$jovyan_uid" -g "$jovyan_gid" /opt/codex; \
+    install -d -o root -g root /opt/codex; \
     cp -a /home/jovyan/.codex/. /opt/codex/; \
     rm -f /home/jovyan/.local/bin/codex; \
-    ln -s "/opt/codex/$codex_relative" /home/jovyan/.local/bin/codex; \
-    chown -R "$jovyan_uid:$jovyan_gid" /opt/codex /home/jovyan/.local
+    ln -s "/opt/codex/$codex_relative" /usr/local/bin/codex; \
+    chown -R root:root /opt/codex; \
+    chmod -R u+rwX,go-w,a+rX /opt/codex
 
 USER jovyan
 
@@ -69,14 +64,10 @@ RUN python -m pip install --no-cache-dir \
         sentencepiece \
         huggingface_hub
 
-# A bind mount keeps the host directory's ownership. Start the init process
-# as root so it can make CODEX_HOME writable, then drop the actual Jupyter
-# process back to jovyan. No sudo access is granted to jovyan.
+# Keep defaults outside CODEX_HOME because Compose bind-mounts CODEX_HOME at
+# runtime. The startup hook seeds missing files only, preserving user changes.
 USER root
 
-# Keep defaults outside CODEX_HOME because Compose bind-mounts CODEX_HOME at
-# runtime. The entrypoint copies these files only when the host has not
-# created them yet, so user changes remain persistent and are never replaced.
 RUN install -d -m 0755 /opt/codex-defaults \
     && printf '%s\n' \
         '# Default model for normal chat and execution.' \
@@ -91,8 +82,17 @@ RUN install -d -m 0755 /opt/codex-defaults \
         'model_reasoning_effort = "high"' \
         'plan_mode_reasoning_effort = "high"' \
         > /opt/codex-defaults/planner.config.toml \
-    && chmod 0644 /opt/codex-defaults/*.toml
+    && chmod 0644 /opt/codex-defaults/*.toml \
+    && rm -rf /home/jovyan/.codex
 
-ENTRYPOINT ["tini", "--", "/bin/bash", "-c", "set -e; target_uid=\"$(id -u jovyan)\"; target_gid=\"$(id -g jovyan)\"; mkdir -p \"$CODEX_HOME\"; if [ ! -e \"$CODEX_HOME/config.toml\" ]; then install -o \"$target_uid\" -g \"$target_gid\" -m 0644 /opt/codex-defaults/config.toml \"$CODEX_HOME/config.toml\"; fi; if [ ! -e \"$CODEX_HOME/planner.config.toml\" ]; then install -o \"$target_uid\" -g \"$target_gid\" -m 0644 /opt/codex-defaults/planner.config.toml \"$CODEX_HOME/planner.config.toml\"; fi; chown -R \"${target_uid}:${target_gid}\" \"$CODEX_HOME\"; chmod -R u+rwX \"$CODEX_HOME\"; exec gosu jovyan \"$@\"", "--"]
+COPY --chown=root:root docker/10-seed-codex-config /usr/local/bin/before-notebook.d/10-seed-codex-config
+COPY --chown=root:root docker/codex-plan /usr/local/bin/codex-plan
 
+RUN chmod 0755 \
+        /usr/local/bin/before-notebook.d/10-seed-codex-config \
+        /usr/local/bin/codex-plan \
+    && command -v codex \
+    && command -v codex-plan
+
+USER jovyan
 CMD ["start-notebook.py"]

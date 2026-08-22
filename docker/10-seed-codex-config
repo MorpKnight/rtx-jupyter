@@ -1,0 +1,33 @@
+#!/bin/bash
+
+set -eu
+
+codex_user="${NB_USER:-jovyan}"
+codex_home="${CODEX_HOME:-/home/${codex_user}/.codex}"
+codex_uid="$(id -u "${codex_user}")"
+codex_gid="$(id -g "${codex_user}")"
+
+if [ "$(id -u)" -eq 0 ]; then
+    install -d -o "${codex_uid}" -g "${codex_gid}" -m 0700 "${codex_home}"
+else
+    install -d -m 0700 "${codex_home}"
+fi
+
+seed_codex_file() {
+    source_file="$1"
+    target_file="${codex_home}/$2"
+
+    if [ -e "${target_file}" ]; then
+        return 0
+    fi
+
+    if [ "$(id -u)" -eq 0 ]; then
+        install -o "${codex_uid}" -g "${codex_gid}" -m 0600 \
+            "${source_file}" "${target_file}"
+    else
+        install -m 0600 "${source_file}" "${target_file}"
+    fi
+}
+
+seed_codex_file /opt/codex-defaults/config.toml config.toml
+seed_codex_file /opt/codex-defaults/planner.config.toml planner.config.toml

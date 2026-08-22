@@ -46,6 +46,84 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Build smoke-test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: rtx-jupyter:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify Compose configuration
+        run: |
+          mkdir -p \
+            "${RUNNER_TEMP}/rtx-jupyter/workspace" \
+            "${RUNNER_TEMP}/rtx-jupyter/data" \
+            "${RUNNER_TEMP}/rtx-jupyter/state/codex" \
+            "${RUNNER_TEMP}/rtx-jupyter/secrets"
+          printf '%s\n' 'ci-placeholder-token' \
+            > "${RUNNER_TEMP}/rtx-jupyter/secrets/cloudflare-tunnel-token"
+          WORKSPACE_ROOT="${RUNNER_TEMP}/rtx-jupyter/workspace" \
+          DATA_ROOT="${RUNNER_TEMP}/rtx-jupyter/data" \
+          CODEX_ROOT="${RUNNER_TEMP}/rtx-jupyter/state/codex" \
+          CLOUDFLARE_TUNNEL_TOKEN_FILE="${RUNNER_TEMP}/rtx-jupyter/secrets/cloudflare-tunnel-token" \
+          TAILSCALE_IP=127.0.0.1 \
+          JUPYTER_TOKEN=ci-placeholder-token \
+            docker compose config --quiet
+
+      - name: Smoke test image runtime
+        run: |
+          docker run --rm rtx-jupyter:ci \
+            bash -lc '
+              test "$(id -u)" -ne 0
+              test -w "$CODEX_HOME"
+              test ! -w /opt/codex
+              test -f "$CODEX_HOME/config.toml"
+              test -f "$CODEX_HOME/planner.config.toml"
+              grep -q '\''model = "gpt-5.6-luna"'\'' "$CODEX_HOME/config.toml"
+              grep -q '\''model_reasoning_effort = "max"'\'' "$CODEX_HOME/config.toml"
+              grep -q '\''model = "gpt-5.6-sol"'\'' "$CODEX_HOME/planner.config.toml"
+              codex --version
+              codex login status
+              codex-plan --version
+              codex-plan login status
+              if sudo -n true 2>/dev/null; then
+                echo "unexpected sudo access" >&2
+                exit 1
+              fi
+            '
+
+          mkdir -p \
+            "${RUNNER_TEMP}/rtx-jupyter/uid-workspace" \
+            "${RUNNER_TEMP}/rtx-jupyter/uid-data" \
+            "${RUNNER_TEMP}/rtx-jupyter/uid-codex"
+          printf '%s\n' '# preserve-existing-config' \
+            > "${RUNNER_TEMP}/rtx-jupyter/uid-codex/config.toml"
+          docker run --rm --user root \
+            --env NB_UID=1234 \
+            --env NB_GID=1234 \
+            --env CHOWN_HOME=yes \
+            --env CHOWN_EXTRA=/home/jovyan/work,/mnt/data,/home/jovyan/.codex \
+            --volume "${RUNNER_TEMP}/rtx-jupyter/uid-workspace:/home/jovyan/work" \
+            --volume "${RUNNER_TEMP}/rtx-jupyter/uid-data:/mnt/data" \
+            --volume "${RUNNER_TEMP}/rtx-jupyter/uid-codex:/home/jovyan/.codex" \
+            rtx-jupyter:ci \
+            bash -lc '
+              test "$(id -u)" -eq 1234
+              test "$(id -g)" -eq 1234
+              touch /home/jovyan/work/.write-test
+              touch /mnt/data/.write-test
+              test -f "$CODEX_HOME/config.toml"
+              test -f "$CODEX_HOME/planner.config.toml"
+              grep -q preserve-existing-config "$CODEX_HOME/config.toml"
+              codex --version
+              codex login status
+            '
+
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
@@ -56,4 +134,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
