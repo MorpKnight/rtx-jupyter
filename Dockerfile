@@ -25,6 +25,31 @@ RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh \
     && command -v codex \
     && codex --version
 
+# The standalone installer keeps the Codex package below CODEX_HOME. Since
+# Compose bind-mounts /home/jovyan/.codex for persistent auth/configuration,
+# move the installed package outside that mount and recreate the PATH link.
+USER root
+
+RUN set -eux; \
+    codex_target="$(readlink -f /home/jovyan/.local/bin/codex)"; \
+    case "$codex_target" in \
+        /home/jovyan/.codex/*) ;; \
+        *) echo "Unexpected Codex target: $codex_target" >&2; exit 1 ;; \
+    esac; \
+    codex_relative="${codex_target#/home/jovyan/.codex/}"; \
+    jovyan_uid="$(id -u jovyan)"; \
+    jovyan_gid="$(id -g jovyan)"; \
+    install -d -o "$jovyan_uid" -g "$jovyan_gid" /opt/codex; \
+    cp -a /home/jovyan/.codex/. /opt/codex/; \
+    rm -f /home/jovyan/.local/bin/codex; \
+    ln -s "/opt/codex/$codex_relative" /home/jovyan/.local/bin/codex; \
+    chown -R "$jovyan_uid:$jovyan_gid" /opt/codex /home/jovyan/.local
+
+USER jovyan
+
+RUN command -v codex \
+    && codex --version
+
 # Replace the CPU-only PyTorch packages from the base image with CUDA 12.8
 # wheels. The NVIDIA driver itself remains on the host and is injected by
 # NVIDIA Container Toolkit at runtime.
