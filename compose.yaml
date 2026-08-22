@@ -48,6 +48,7 @@ services:
 
   cloudflared:
     image: "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
+    container_name: cloudflared-jupyter
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
