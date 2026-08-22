@@ -119,12 +119,13 @@ Edit `.env` and replace every placeholder. Set `NB_UID` and `NB_GID` to the nume
 Compose validates the top-level secret even when only its configuration is being rendered:
 
 ```bash
-install -m 0600 /dev/null secrets/cloudflare-tunnel-token
+install -m 0640 /dev/null secrets/cloudflare-tunnel-token
+chown "$(id -u):$(id -g)" secrets/cloudflare-tunnel-token
 $EDITOR secrets/cloudflare-tunnel-token
 test -s secrets/cloudflare-tunnel-token
 ```
 
-Store only the token value in the file. Do not add it to `.env`, a Docker command, the image, or Git.
+Store only the token value in the file. Do not add it to `.env`, a Docker command, the image, or Git. The file must be owned by `NB_UID:NB_GID` with mode `0640`: Compose grants the non-root `cloudflared` process supplementary access to `NB_GID`, while the secret remains read-only inside that container.
 
 ### 5. Build or pull the image
 
@@ -177,7 +178,10 @@ install -d -m 0700 \
   /home/giovan/.local/state/rtx-jupyter/testing/codex \
   /home/giovan/.config/rtx-jupyter/testing
 
-install -m 0600 /dev/null \
+install -m 0640 /dev/null \
+  /home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
+
+chown "$(id -u):$(id -g)" \
   /home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
 ```
 
@@ -234,7 +238,9 @@ CLOUDFLARE_TUNNEL_TOKEN_FILE=/home/giovan/.config/rtx-jupyter/production/cloudfl
 
 `PROJECT_ROOT` is no longer supported. Replace it with `WORKSPACE_ROOT` before recreating the service.
 
-The container starts as root only so the inherited Jupyter Docker Stacks `start.sh` can map `jovyan` to `NB_UID:NB_GID` and fix the three mount roots. It then launches Jupyter as the mapped notebook user. `GRANT_SUDO` is not enabled, and recursive ownership changes are not performed at startup.
+The Jupyter container starts as root only so the inherited Jupyter Docker Stacks `start.sh` can map `jovyan` to `NB_UID:NB_GID` and fix the three mount roots. A startup hook then prepares only the required Jupyter/XDG runtime directories before Jupyter launches as the mapped notebook user. `GRANT_SUDO` is not enabled, and recursive ownership changes are not performed at startup.
+
+The Cloudflare token is a file-backed Compose secret. Docker Compose preserves the host file ownership for this type of secret, so the connector receives `NB_GID` as a supplementary group and the host file uses mode `0640`. The secret is mounted read-only only in `cloudflared`.
 
 ## Verification
 
@@ -296,12 +302,16 @@ Confirm that the secret is read-only in `cloudflared`:
 ```bash
 sudo docker inspect cloudflared-jupyter \
   --format '{{range .Mounts}}{{println .Destination "RW=" .RW}}{{end}}'
+
+sudo docker inspect cloudflared-jupyter \
+  --format '{{json .HostConfig.GroupAdd}}'
 ```
 
 Expected secret mount:
 
 ```text
 /run/secrets/cloudflare_tunnel_token RW= false
+["<NB_GID>"]
 ```
 
 ### GPU and PyTorch
@@ -585,6 +595,27 @@ sudo docker inspect docker-jupyter \
 
 Correct ownership only on the intended mount. Do not recursively chown `/mnt/data`, `/home`, or another broad host directory.
 
+If the log specifically mentions `/home/jovyan/.local/share`, rebuild the image so the `05-prepare-jupyter-dirs` startup hook is present. The hook repairs only the required Jupyter/XDG runtime directories after UID/GID mapping.
+
+### Cloudflared cannot read the tunnel token
+
+File-backed Compose secrets preserve host ownership. Confirm that the token group matches `NB_GID`, that group-read is enabled, and that Compose passed the same group to the connector:
+
+```bash
+token_path=/path/from/CLOUDFLARE_TUNNEL_TOKEN_FILE
+stat -c '%a %u:%g %n' "$token_path"
+sudo docker inspect cloudflared-jupyter \
+  --format '{{json .HostConfig.GroupAdd}}'
+```
+
+For `NB_UID=1002` and `NB_GID=1002`, the expected values are `640 1002:1002` and `["1002"]`. Correct only the token file:
+
+```bash
+chown "$(id -u):$(id -g)" "$token_path"
+chmod 0640 "$token_path"
+sudo docker compose up -d --force-recreate cloudflared
+```
+
 ### CUDA is unavailable
 
 Validate the host runtime first, then inspect PyTorch inside the actual Compose service:
@@ -621,6 +652,7 @@ sudo docker compose logs --tail=200 cloudflared
 - [Jupyter Docker Stacks](https://github.com/jupyter/docker-stacks)
 - [Docker Compose GPU support](https://docs.docker.com/compose/how-tos/gpu-support/)
 - [Docker Compose bind mounts](https://docs.docker.com/reference/compose-file/services/#volumes)
+- [Docker Compose secrets](https://docs.docker.com/reference/compose-file/services/#secrets)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/)
 - [PyTorch previous versions](https://pytorch.org/get-started/previous-versions/)
 - [Codex CLI](https://developers.openai.com/codex/cli/)

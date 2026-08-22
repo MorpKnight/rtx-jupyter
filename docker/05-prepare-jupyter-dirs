@@ -1,0 +1,31 @@
+#!/bin/bash
+set -eu
+
+notebook_user="${NB_USER:-jovyan}"
+notebook_home="$(getent passwd "${notebook_user}" | cut -d: -f6)"
+notebook_uid="$(id -u "${notebook_user}")"
+notebook_gid="$(id -g "${notebook_user}")"
+
+create_dir() {
+    mode="$1"
+    path="$2"
+
+    if [ "$(id -u)" -eq 0 ]; then
+        install -d \
+            -o "${notebook_uid}" \
+            -g "${notebook_gid}" \
+            -m "${mode}" \
+            "${path}"
+    else
+        install -d -m "${mode}" "${path}"
+    fi
+}
+
+# CHOWN_HOME is intentionally non-recursive. Prepare only the XDG/Jupyter
+# directories that must remain writable after start.sh remaps jovyan's UID/GID.
+create_dir 0755 "${notebook_home}/.local"
+create_dir 0755 "${notebook_home}/.local/share"
+create_dir 0755 "${notebook_home}/.local/share/jupyter"
+create_dir 0700 "${notebook_home}/.local/share/jupyter/runtime"
+create_dir 0700 "${notebook_home}/.cache"
+create_dir 0700 "${notebook_home}/.config"

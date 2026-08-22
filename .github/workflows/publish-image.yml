@@ -74,6 +74,17 @@ jobs:
           TAILSCALE_IP=127.0.0.1 \
           JUPYTER_TOKEN=ci-placeholder-token \
             docker compose config --quiet
+          test "$(
+            NB_GID=1234 \
+            WORKSPACE_ROOT="${RUNNER_TEMP}/rtx-jupyter/workspace" \
+            DATA_ROOT="${RUNNER_TEMP}/rtx-jupyter/data" \
+            CODEX_ROOT="${RUNNER_TEMP}/rtx-jupyter/state/codex" \
+            CLOUDFLARE_TUNNEL_TOKEN_FILE="${RUNNER_TEMP}/rtx-jupyter/secrets/cloudflare-tunnel-token" \
+            TAILSCALE_IP=127.0.0.1 \
+            JUPYTER_TOKEN=ci-placeholder-token \
+              docker compose config --format json \
+              | jq -r '.services.cloudflared.group_add[0]'
+          )" = "1234"
 
       - name: Smoke test image runtime
         run: |
@@ -117,6 +128,9 @@ jobs:
               test "$(id -g)" -eq 1234
               touch /home/jovyan/work/.write-test
               touch /mnt/data/.write-test
+              test -w /home/jovyan/.local/share/jupyter/runtime
+              test -w /home/jovyan/.cache
+              test -w /home/jovyan/.config
               test -f "$CODEX_HOME/config.toml"
               test -f "$CODEX_HOME/planner.config.toml"
               grep -q preserve-existing-config "$CODEX_HOME/config.toml"

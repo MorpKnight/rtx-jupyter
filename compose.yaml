@@ -71,6 +71,10 @@ services:
     image: "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
     container_name: cloudflared-jupyter
     restart: unless-stopped
+    # The file-backed secret keeps its host ownership. Grant the non-root
+    # connector read access through the notebook user's primary host group.
+    group_add:
+      - "${NB_GID:-1000}"
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token

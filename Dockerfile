@@ -85,10 +85,12 @@ RUN install -d -m 0755 /opt/codex-defaults \
     && chmod 0644 /opt/codex-defaults/*.toml \
     && rm -rf /home/jovyan/.codex
 
+COPY --chown=root:root docker/05-prepare-jupyter-dirs /usr/local/bin/before-notebook.d/05-prepare-jupyter-dirs
 COPY --chown=root:root docker/10-seed-codex-config /usr/local/bin/before-notebook.d/10-seed-codex-config
 COPY --chown=root:root docker/codex-plan /usr/local/bin/codex-plan
 
 RUN chmod 0755 \
+        /usr/local/bin/before-notebook.d/05-prepare-jupyter-dirs \
         /usr/local/bin/before-notebook.d/10-seed-codex-config \
         /usr/local/bin/codex-plan \
     && command -v codex \
