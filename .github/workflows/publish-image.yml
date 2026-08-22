@@ -14,7 +14,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/morphknight/rtx-jupyter
+  IMAGE_NAME: ghcr.io/morpknight/rtx-jupyter
 
 jobs:
   build-and-push:
