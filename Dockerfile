@@ -74,11 +74,4 @@ RUN python -m pip install --no-cache-dir \
 # process back to jovyan. No sudo access is granted to jovyan.
 USER root
 
-ENTRYPOINT [
-    "tini",
-    "--",
-    "/bin/bash",
-    "-c",
-    "set -e; target_uid=\"$(id -u jovyan)\"; target_gid=\"$(id -g jovyan)\"; mkdir -p \"$CODEX_HOME\"; chown -R \"${target_uid}:${target_gid}\" \"$CODEX_HOME\"; chmod -R u+rwX \"$CODEX_HOME\"; exec gosu jovyan \"$@\"",
-    "--"
-]
+ENTRYPOINT ["tini", "--", "/bin/bash", "-c", "set -e; target_uid=\"$(id -u jovyan)\"; target_gid=\"$(id -g jovyan)\"; mkdir -p \"$CODEX_HOME\"; chown -R \"${target_uid}:${target_gid}\" \"$CODEX_HOME\"; chmod -R u+rwX \"$CODEX_HOME\"; exec gosu jovyan \"$@\"", "--"]
