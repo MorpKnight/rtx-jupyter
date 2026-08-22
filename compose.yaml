@@ -1,0 +1,43 @@
+name: docker-jupyter
+
+services:
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "${IMAGE_NAME:-giovan/jupyter-gpu:cu128}"
+    container_name: docker-jupyter
+    restart: unless-stopped
+
+    # Bind the published port only to the host's Tailscale IPv4 address.
+    # Compose stops with a clear error when TAILSCALE_IP is not configured.
+    ports:
+      - "${TAILSCALE_IP:?Set TAILSCALE_IP in .env}:8888:8888"
+
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: "${JUPYTER_TOKEN:?Set JUPYTER_TOKEN in .env}"
+
+      # Keep Hugging Face downloads and caches on the persistent host volume.
+      HF_HOME: /mnt/data/.cache/huggingface
+      HF_HUB_CACHE: /mnt/data/.cache/huggingface/hub
+      TRANSFORMERS_CACHE: /mnt/data/.cache/huggingface/hub
+
+      # Codex binary is in the image; account state is persisted separately.
+      CODEX_HOME: /home/jovyan/.codex
+
+    volumes:
+      - "${PROJECT_ROOT:-/home/giovan/docker-jupyter}:/home/jovyan/work"
+      - "${DATA_ROOT:-/mnt/data/giovan/docker-jupyter}:/mnt/data"
+      - "${CODEX_ROOT:-/mnt/data/giovan/docker-jupyter/codex}:/home/jovyan/.codex"
+
+    working_dir: /home/jovyan/work
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
