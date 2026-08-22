@@ -1,6 +1,7 @@
 FROM quay.io/jupyter/pytorch-notebook:82d322f00937
 
-# Install OS-level tools as root. The container returns to jovyan for runtime.
+# Install OS-level tools as root. The entrypoint later drops the service to
+# jovyan for runtime.
 USER root
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -9,6 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        gosu \
         nvtop \
     && rm -rf /var/lib/apt/lists/*
 
@@ -66,3 +68,17 @@ RUN python -m pip install --no-cache-dir \
         safetensors \
         sentencepiece \
         huggingface_hub
+
+# A bind mount keeps the host directory's ownership. Start the init process
+# as root so it can make CODEX_HOME writable, then drop the actual Jupyter
+# process back to jovyan. No sudo access is granted to jovyan.
+USER root
+
+ENTRYPOINT [
+    "tini",
+    "--",
+    "/bin/bash",
+    "-c",
+    "set -e; target_uid=\"$(id -u jovyan)\"; target_gid=\"$(id -g jovyan)\"; mkdir -p \"$CODEX_HOME\"; chown -R \"${target_uid}:${target_gid}\" \"$CODEX_HOME\"; chmod -R u+rwX \"$CODEX_HOME\"; exec gosu jovyan \"$@\"",
+    "--"
+]
