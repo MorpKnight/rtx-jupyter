@@ -24,6 +24,7 @@ jobs:
           docker run --rm \
             --volume "$PWD:/workspace:ro" \
             --workdir /workspace \
+            --entrypoint hadolint \
             hadolint/hadolint:latest-debian Dockerfile
 
       - name: Lint shell scripts
@@ -31,6 +32,7 @@ jobs:
           docker run --rm \
             --volume "$PWD:/workspace:ro" \
             --workdir /workspace \
+            --entrypoint shellcheck \
             koalaman/shellcheck:stable \
             scripts/*.sh docker/05-prepare-jupyter-dirs \
             docker/10-seed-codex-config docker/codex-plan
@@ -39,6 +41,7 @@ jobs:
         run: |
           docker run --rm \
             --volume "$PWD:/repo:ro" \
+            --entrypoint gitleaks \
             zricethezav/gitleaks:latest \
             detect --source=/repo --no-git --no-banner --redact
 
