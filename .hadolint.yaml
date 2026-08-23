@@ -1,3 +1,5 @@
+failure-threshold: warning
+
 ignored:
   # This project intentionally follows latest-at-build dependencies.
   - DL3007

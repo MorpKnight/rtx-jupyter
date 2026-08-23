@@ -57,6 +57,9 @@ wait_for_health "${jupyter_id}" jupyter
 before_hashes="$("${compose[@]}" exec -T --user jovyan jupyter \
     sha256sum /home/jovyan/.codex/config.toml /home/jovyan/.codex/planner.config.toml)"
 
+# Variables in this single-quoted script intentionally expand inside the
+# container, not in the host shell.
+# shellcheck disable=SC2016
 "${compose[@]}" exec -T --user jovyan jupyter bash -lc '
     set -eu
     test "$(id -u)" -ne 0

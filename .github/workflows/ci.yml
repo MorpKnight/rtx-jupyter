@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint and secret scan
@@ -25,7 +29,8 @@ jobs:
             --volume "$PWD:/workspace:ro" \
             --workdir /workspace \
             --entrypoint hadolint \
-            hadolint/hadolint:latest-debian Dockerfile
+            hadolint/hadolint:latest-debian \
+            --config /workspace/.hadolint.yaml Dockerfile
 
       - name: Lint shell scripts
         run: |
@@ -43,7 +48,7 @@ jobs:
             --volume "$PWD:/repo:ro" \
             --entrypoint gitleaks \
             zricethezav/gitleaks:latest \
-            detect --source=/repo --no-git --no-banner --redact
+            detect --source=/repo --no-banner --redact
 
   image:
     name: Build and test latest dependencies
@@ -81,6 +86,7 @@ jobs:
             --volume /var/run/docker.sock:/var/run/docker.sock \
             --volume "${RUNNER_TEMP}/trivy-cache:/root/.cache/trivy" \
             --volume "$PWD:/reports" \
+            --entrypoint trivy \
             aquasec/trivy:latest image \
             --severity HIGH,CRITICAL \
             --format json \
@@ -101,6 +107,7 @@ jobs:
           docker run --rm \
             --volume /var/run/docker.sock:/var/run/docker.sock \
             --volume "${RUNNER_TEMP}/trivy-cache:/root/.cache/trivy" \
+            --entrypoint trivy \
             aquasec/trivy:latest image \
             --ignore-unfixed \
             --severity CRITICAL \

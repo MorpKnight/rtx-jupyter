@@ -100,7 +100,11 @@ final_dir="${destination}/rtx-jupyter-backup-${timestamp}"
 }
 
 staging="$(mktemp -d "${destination}/.rtx-jupyter-backup.XXXXXX")"
+checksum_file_list=""
 cleanup() {
+    if [[ -n "${checksum_file_list}" ]]; then
+        rm -f -- "${checksum_file_list}"
+    fi
     rm -rf -- "${staging}"
 }
 trap cleanup EXIT
@@ -151,12 +155,16 @@ fi
     printf 'format=rtx-jupyter-backup-v1\n'
 } >"${staging}/manifest.env"
 
+checksum_file_list="$(mktemp)"
 (
     cd "${staging}"
     find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
         | sort -z \
-        | xargs -0 sha256sum >SHA256SUMS
+        >"${checksum_file_list}"
+    xargs -0 sha256sum <"${checksum_file_list}" >SHA256SUMS
 )
+rm -f -- "${checksum_file_list}"
+checksum_file_list=""
 
 chmod -R go-rwx "${staging}"
 mv "${staging}" "${final_dir}"
