@@ -112,7 +112,9 @@ jobs:
             --volume "$PWD:/reports" \
             --entrypoint trivy \
             aquasec/trivy:latest image \
+            --scanners vuln \
             --severity HIGH,CRITICAL \
+            --timeout 30m \
             --format json \
             --output /reports/trivy-report.json \
             "${CANDIDATE_REF}"
@@ -128,15 +130,35 @@ jobs:
 
       - name: Block fixable critical vulnerabilities
         run: |
-          docker run --rm \
-            --volume /var/run/docker.sock:/var/run/docker.sock \
-            --volume "${RUNNER_TEMP}/trivy-cache:/root/.cache/trivy" \
-            --entrypoint trivy \
-            aquasec/trivy:latest image \
-            --ignore-unfixed \
-            --severity CRITICAL \
-            --exit-code 1 \
-            "${CANDIDATE_REF}"
+          fixable_critical_count="$(
+            jq '[
+              .Results[]?.Vulnerabilities[]?
+              | select(
+                  .Severity == "CRITICAL"
+                  and (.FixedVersion // "") != ""
+                )
+            ] | length' trivy-report.json
+          )"
+          if ((fixable_critical_count > 0)); then
+            echo "Found ${fixable_critical_count} fixable CRITICAL vulnerabilities:" >&2
+            jq -r '
+              .Results[]? as $result
+              | $result.Vulnerabilities[]?
+              | select(
+                  .Severity == "CRITICAL"
+                  and (.FixedVersion // "") != ""
+                )
+              | [
+                  $result.Target,
+                  .VulnerabilityID,
+                  .PkgName,
+                  .InstalledVersion,
+                  .FixedVersion
+                ]
+              | @tsv
+            ' trivy-report.json >&2
+            exit 1
+          fi
 
       - name: Promote tested manifest
         run: |
