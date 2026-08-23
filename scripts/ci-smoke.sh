@@ -5,10 +5,31 @@ image_ref="${1:?Usage: ci-smoke.sh IMAGE_REF}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="$(mktemp -d)"
 container_name="rtx-jupyter-ci-${RANDOM}-${RANDOM}"
+cleanup_uid="$(id -u)"
+cleanup_gid="$(id -g)"
 
 cleanup() {
+    exit_status=$?
+    trap - EXIT
+
     docker rm -f "${container_name}" >/dev/null 2>&1 || true
-    rm -rf -- "${tmp_root}"
+
+    # Jupyter's startup intentionally remaps bind-mounted directories to the
+    # test UID/GID (1234:1234). Restore runner ownership before deleting the
+    # fixture, and never let best-effort cleanup hide the real test result.
+    if [[ -d "${tmp_root}" ]]; then
+        docker run --rm \
+            --user root \
+            --entrypoint chown \
+            --volume "${tmp_root}:/cleanup" \
+            "${image_ref}" \
+            -R "${cleanup_uid}:${cleanup_gid}" /cleanup \
+            >/dev/null 2>&1 || true
+        chmod -R u+rwX "${tmp_root}" >/dev/null 2>&1 || true
+        rm -rf -- "${tmp_root}" || true
+    fi
+
+    return "${exit_status}"
 }
 trap cleanup EXIT
 
