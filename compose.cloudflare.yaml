@@ -1,0 +1,52 @@
+secrets:
+  cloudflare_tunnel_token:
+    file: "${CLOUDFLARE_TUNNEL_TOKEN_FILE:?Set CLOUDFLARE_TUNNEL_TOKEN_FILE when using compose.cloudflare.yaml}"
+
+services:
+  cloudflared:
+    image: "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
+    pull_policy: always
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 256
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+    # File-backed Compose secrets preserve host ownership. Grant the non-root
+    # connector read access through the notebook user's primary host group.
+    group_add:
+      - "${NB_GID:-1000}"
+
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --metrics
+      - 127.0.0.1:2000
+      - run
+
+    environment:
+      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
+
+    secrets:
+      - cloudflare_tunnel_token
+
+    depends_on:
+      jupyter:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD
+        - cloudflared
+        - tunnel
+        - --metrics
+        - 127.0.0.1:2000
+        - ready
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

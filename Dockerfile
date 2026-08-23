@@ -1,4 +1,4 @@
-FROM quay.io/jupyter/pytorch-notebook:82d322f00937
+FROM quay.io/jupyter/pytorch-notebook:latest
 
 # Install OS-level tools as root. Runtime privilege dropping is handled by the
 # inherited Jupyter Docker Stacks entrypoint.
@@ -51,9 +51,9 @@ RUN command -v codex \
 # wheels. The NVIDIA driver itself remains on the host and is injected by
 # NVIDIA Container Toolkit at runtime.
 RUN python -m pip install --no-cache-dir --upgrade --force-reinstall \
-        torch==2.8.0 \
-        torchvision==0.23.0 \
-        torchaudio==2.8.0 \
+        torch \
+        torchvision \
+        torchaudio \
         --index-url https://download.pytorch.org/whl/cu128
 
 # Dependencies used by the local Qwen/Transformers workflow.

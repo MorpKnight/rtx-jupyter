@@ -1,0 +1,5 @@
+ignored:
+  # This project intentionally follows latest-at-build dependencies.
+  - DL3007
+  - DL3008
+  - DL3013

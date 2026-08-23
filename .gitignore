@@ -8,6 +8,10 @@ state/
 models/
 datasets/
 checkpoints/
+backups/
+reports/
+trivy-report.json
+version-report.txt
 *.safetensors
 *.bin
 *.pt
@@ -23,3 +27,7 @@ secrets/
 **/secrets/
 cloudflare-tunnel-token
 **/cloudflare-tunnel-token
+
+*.age
+age-key.txt
+age-key.txt.pub

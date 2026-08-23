@@ -1,23 +1,21 @@
-name: docker-jupyter
-
-secrets:
-  cloudflare_tunnel_token:
-    file: "${CLOUDFLARE_TUNNEL_TOKEN_FILE:-./secrets/cloudflare-tunnel-token}"
+name: "${COMPOSE_PROJECT_NAME:-rtx-jupyter}"
 
 services:
   jupyter:
     build:
       context: .
       dockerfile: Dockerfile
-    image: "${IMAGE_NAME:-giovan/jupyter-gpu:cu128}"
-    container_name: docker-jupyter
+    image: "${IMAGE_NAME:-ghcr.io/morpknight/rtx-jupyter:latest}"
     restart: unless-stopped
     user: root
+    shm_size: "${SHM_SIZE:-2gb}"
+    stop_grace_period: "${STOP_GRACE_PERIOD:-60s}"
 
-    # Bind the published port only to the host's Tailscale IPv4 address.
-    # Compose stops with a clear error when TAILSCALE_IP is not configured.
-    ports:
-      - "${TAILSCALE_IP:?Set TAILSCALE_IP in .env}:8888:8888"
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
 
     environment:
       # start.sh maps jovyan to the host UID/GID, fixes only mount roots, and
@@ -58,28 +56,22 @@ services:
 
     working_dir: /home/jovyan/work
 
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl --fail --silent --show-error http://127.0.0.1:8888/ >/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
     deploy:
       resources:
+        limits:
+          pids: "${PIDS_LIMIT:-4096}"
         reservations:
           devices:
             - driver: nvidia
               count: 1
               capabilities:
                 - gpu
-
-  cloudflared:
-    image: "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
-    container_name: cloudflared-jupyter
-    restart: unless-stopped
-    # The file-backed secret keeps its host ownership. Grant the non-root
-    # connector read access through the notebook user's primary host group.
-    group_add:
-      - "${NB_GID:-1000}"
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
-    secrets:
-      - cloudflare_tunnel_token
-    depends_on:
-      jupyter:
-        condition: service_started

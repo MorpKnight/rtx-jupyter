@@ -1,0 +1,4 @@
+services:
+  jupyter:
+    ports:
+      - "${TAILSCALE_IP:?Set TAILSCALE_IP when using compose.tailscale.yaml}:8888:8888"

@@ -15,6 +15,8 @@ state/
 models/
 datasets/
 checkpoints/
+backups/
+reports/
 secrets/
 **/secrets/
 cloudflare-tunnel-token
@@ -24,6 +26,10 @@ cloudflare-tunnel-token
 **/.codex/
 auth.json
 **/auth.json
+
+*.age
+age-key.txt
+age-key.txt.pub
 
 *.safetensors
 *.bin

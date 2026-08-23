@@ -1,54 +1,25 @@
 # RTX Jupyter
 
-[![Build and publish image](https://github.com/MorpKnight/rtx-jupyter/actions/workflows/publish-image.yml/badge.svg)](https://github.com/MorpKnight/rtx-jupyter/actions/workflows/publish-image.yml)
-![Linux x86_64](https://img.shields.io/badge/platform-Linux%20x86__64-333?style=flat-square)
+[![CI](https://github.com/MorpKnight/rtx-jupyter/actions/workflows/ci.yml/badge.svg)](https://github.com/MorpKnight/rtx-jupyter/actions/workflows/ci.yml)
+[![Build and publish](https://github.com/MorpKnight/rtx-jupyter/actions/workflows/publish-image.yml/badge.svg)](https://github.com/MorpKnight/rtx-jupyter/actions/workflows/publish-image.yml)
+![Linux AMD64](https://img.shields.io/badge/platform-Linux%20AMD64-333?style=flat-square)
 ![NVIDIA GPU](https://img.shields.io/badge/GPU-NVIDIA-76B900?style=flat-square&logo=nvidia&logoColor=white)
-![PyTorch](https://img.shields.io/badge/PyTorch-2.8.0%20%7C%20CUDA%2012.8-ee4c2c?style=flat-square&logo=pytorch&logoColor=white)
 
-A reusable JupyterLab environment for Linux x86_64 hosts with NVIDIA GPUs. The image bundles CUDA-enabled PyTorch, common Hugging Face tooling, `nvtop`, and Codex CLI. Docker Compose keeps notebooks, model data, Codex state, and Cloudflare credentials outside the image and in separate host directories.
+An evergreen JupyterLab image for Linux AMD64 hosts with an NVIDIA GPU. It bundles CUDA-enabled PyTorch, Hugging Face tooling, `nvtop`, and Codex CLI while keeping notebooks, data, caches, and credentials on the host.
 
-The project has been exercised with RTX 4090 and RTX 3090 Ti hosts. Other NVIDIA GPUs can work when their host driver, architecture, CUDA compatibility, and NVIDIA Container Toolkit are suitable.
+Choose one access mode without editing Compose YAML:
 
-[Quick start](#quick-start) · [Configuration](#configuration) · [Verification](#verification) · [Codex CLI](#codex-cli) · [Cloudflare Tunnel](#cloudflare-tunnel) · [Migration](#migration-from-the-legacy-layout) · [CI](#image-publishing-and-ci)
+- Localhost only.
+- Tailscale only.
+- Cloudflare Tunnel only.
+- Tailscale and Cloudflare together.
 
-## What is included
-
-The image contains:
-
-- JupyterLab from a pinned Jupyter Docker Stacks PyTorch image.
-- PyTorch `2.8.0+cu128`, torchvision `0.23.0`, and torchaudio `2.8.0`.
-- `transformers`, `accelerate`, `safetensors`, `sentencepiece`, and `huggingface_hub`.
-- `nvtop`.
-- Codex CLI installed under `/opt/codex` and exposed as `/usr/local/bin/codex`.
-- A separate `codex-plan` launcher for the planner profile.
-
-Compose provides:
-
-- One NVIDIA GPU through a Compose device reservation.
-- Jupyter bound only to the host's Tailscale IPv4 address.
-- An optional remotely-managed Cloudflare Tunnel connector.
-- Host UID/GID mapping through the inherited Jupyter Docker Stacks startup process.
-- Separate bind mounts for work, data, and Codex account state.
-
-Dependencies installed by the Dockerfile survive container recreation because they belong to the image. Notebooks, models, datasets, caches, and Codex authentication survive because they belong to bind-mounted host directories.
+> [!IMPORTANT]
+> This project deliberately installs the latest available dependencies at build time. Two builds from the same commit can differ. CI records installed versions, publishes an immutable build tag and digest, and promotes a build to `latest` only after tests and security gates pass.
 
 ## Architecture
 
-```text
-Tailscale client
-    -> TAILSCALE_IP:8888
-    -> Jupyter token
-    -> jupyter container
-
-Internet client
-    -> Cloudflare Access
-    -> Cloudflare Edge
-    -> cloudflared container
-    -> http://jupyter:8888
-    -> Jupyter token
-```
-
-The Jupyter container receives only these host trees:
+The core Compose file does not publish a host port:
 
 ```text
 WORKSPACE_ROOT -> /home/jovyan/work
@@ -56,20 +27,36 @@ DATA_ROOT      -> /mnt/data
 CODEX_ROOT     -> /home/jovyan/.codex
 ```
 
-The repository checkout, `.env`, and Cloudflare token file must remain outside all three trees. The tunnel token is mounted read-only only into `cloudflared` at `/run/secrets/cloudflare_tunnel_token`.
+Access is added through overlays:
 
-> [!IMPORTANT]
-> A remotely-managed Cloudflare Tunnel token is sufficient to run that tunnel. Treat it as a credential, keep it out of the Jupyter mounts, and rotate it if it was previously exposed. See [Cloudflare Tunnel permissions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/remote-tunnel-permissions/).
+```text
+Local client    -> 127.0.0.1:8888 -> Jupyter
+Tailscale       -> TAILSCALE_IP:8888 -> Jupyter
+Cloudflare Edge -> cloudflared -> http://jupyter:8888
+```
+
+The repository, `.env`, and Cloudflare token must remain outside all three mounted roots.
+
+## Included software
+
+- Latest Jupyter Docker Stacks PyTorch notebook base at build time.
+- Latest PyTorch, torchvision, and torchaudio available from the CUDA 12.8 wheel index.
+- Latest `transformers`, `accelerate`, `safetensors`, `sentencepiece`, and `huggingface_hub`.
+- Latest Codex CLI from the official installer.
+- `nvtop` and JupyterLab.
+- A `codex-plan` launcher for the planner profile.
+
+The NVIDIA driver is supplied by the host through NVIDIA Container Toolkit; it is not included in the image.
 
 ## Requirements
 
-- Linux x86_64.
+- Linux AMD64.
 - Docker Engine and Docker Compose v2.
-- An NVIDIA GPU with a compatible host driver.
+- NVIDIA GPU and a compatible host driver.
 - NVIDIA Container Toolkit configured for Docker.
-- Tailscale for direct private access.
-- A Cloudflare-managed hostname and Cloudflare Access configuration when using the tunnel.
-- Registry access to Quay and GHCR, or a cached base/prebuilt image.
+- Registry access to Quay and GHCR, or cached images.
+- Tailscale only when the Tailscale overlay is selected.
+- A remotely-managed Cloudflare Tunnel and Access policy only when the Cloudflare overlay is selected.
 
 Validate the host GPU runtime first:
 
@@ -79,585 +66,411 @@ sudo docker run --rm --gpus all \
   nvidia-smi
 ```
 
-The host driver is injected at runtime. CUDA libraries inside the image do not replace the host driver or NVIDIA Container Toolkit.
-
 ## Quick start
 
-### 1. Clone the repository
+### 1. Clone and prepare storage
 
 ```bash
 git clone https://github.com/MorpKnight/rtx-jupyter.git
 cd rtx-jupyter
+
+mkdir -p workspace data state/codex
+chmod 0700 state/codex
 ```
 
-### 2. Create the persistent directories
+Compose uses `create_host_path: false`, so missing bind sources fail instead of being silently created as root-owned directories.
 
-The portable defaults keep runtime state below the checkout while ensuring that the checkout itself is not mounted into Jupyter:
-
-```bash
-install -d -m 0755 workspace data
-install -d -m 0700 state/codex secrets
-```
-
-Compose uses `create_host_path: false`. Missing directories therefore cause startup to fail instead of being silently created as root-owned paths.
-
-### 3. Configure the environment
+### 2. Configure the environment
 
 ```bash
 cp .env.example .env
-chmod 600 .env
+chmod 0600 .env
 id -u
 id -g
-tailscale ip -4
 openssl rand -hex 32
 ```
 
-Edit `.env` and replace every placeholder. Set `NB_UID` and `NB_GID` to the numeric values printed by `id`.
-
-### 4. Add the Cloudflare token
-
-Compose validates the top-level secret even when only its configuration is being rendered:
-
-```bash
-install -m 0640 /dev/null secrets/cloudflare-tunnel-token
-chown "$(id -u):$(id -g)" secrets/cloudflare-tunnel-token
-$EDITOR secrets/cloudflare-tunnel-token
-test -s secrets/cloudflare-tunnel-token
-```
-
-Store only the token value in the file. Do not add it to `.env`, a Docker command, the image, or Git. The file must be owned by `NB_UID:NB_GID` with mode `0640`: Compose grants the non-root `cloudflared` process supplementary access to `NB_GID`, while the secret remains read-only inside that container.
-
-### 5. Build or pull the image
-
-Build locally:
-
-```bash
-sudo docker compose config --quiet
-sudo docker compose build jupyter
-sudo docker compose up -d jupyter cloudflared
-```
-
-Or use the image published by GitHub Actions by changing `.env`:
+Set `NB_UID`, `NB_GID`, and `JUPYTER_TOKEN` in `.env`. The safe default is localhost:
 
 ```env
-IMAGE_NAME=ghcr.io/morpknight/rtx-jupyter:latest
+COMPOSE_PROJECT_NAME=rtx-jupyter
+COMPOSE_FILE=compose.yaml:compose.local.yaml
 ```
 
-Then run:
+Project names isolate resources and generate deterministic names such as `rtx-jupyter-jupyter-1`. Do not add fixed `container_name` values.
+
+### 3. Pull or build
+
+Use the latest tested GHCR image:
 
 ```bash
-sudo docker compose config --quiet
-sudo docker compose pull jupyter cloudflared
-sudo docker compose up -d --no-build jupyter cloudflared
+sudo docker compose pull
+sudo docker compose up -d --no-build
 ```
 
-For reproducible deployments, prefer a version, commit, or digest instead of `latest`.
+Or build the latest dependencies locally:
+
+```bash
+sudo docker compose build --pull --no-cache jupyter
+sudo docker compose up -d
+```
+
+### 4. Verify
+
+```bash
+sudo docker compose ps
+sudo ./scripts/verify.sh
+sudo ./scripts/verify-gpu.sh
+```
+
+Local access:
+
+```text
+http://127.0.0.1:8888/?token=<JUPYTER_TOKEN>
+```
+
+## Access modes
+
+Set exactly one of these `COMPOSE_FILE` values in `.env`.
+
+### Localhost only
+
+```env
+COMPOSE_FILE=compose.yaml:compose.local.yaml
+JUPYTER_PORT=8888
+```
+
+### Tailscale only
+
+```env
+COMPOSE_FILE=compose.yaml:compose.tailscale.yaml
+TAILSCALE_IP=100.x.y.z
+```
+
+Obtain the address with:
+
+```bash
+tailscale ip -4
+```
+
+### Cloudflare only
+
+```env
+COMPOSE_FILE=compose.yaml:compose.cloudflare.yaml
+CLOUDFLARE_TUNNEL_TOKEN_FILE=/absolute/path/to/cloudflare-tunnel-token
+```
+
+### Tailscale and Cloudflare
+
+```env
+COMPOSE_FILE=compose.yaml:compose.tailscale.yaml:compose.cloudflare.yaml
+TAILSCALE_IP=100.x.y.z
+CLOUDFLARE_TUNNEL_TOKEN_FILE=/absolute/path/to/cloudflare-tunnel-token
+```
+
+### Optional CPU and RAM limits
+
+Append the resources overlay:
+
+```env
+COMPOSE_FILE=compose.yaml:compose.tailscale.yaml:compose.cloudflare.yaml:compose.resources.yaml
+CPU_LIMIT=8
+MEMORY_LIMIT=32g
+```
+
+The default stack does not impose CPU or RAM limits. It does use configurable operational defaults:
+
+```env
+SHM_SIZE=2gb
+PIDS_LIMIT=4096
+STOP_GRACE_PERIOD=60s
+LOG_MAX_SIZE=10m
+LOG_MAX_FILE=3
+```
+
+## Cloudflare Tunnel
+
+Create a dedicated remotely-managed tunnel and published application route:
+
+```text
+https://jupyter.example.com -> http://jupyter:8888
+```
+
+Protect the hostname with a Cloudflare Access self-hosted application. Keep Jupyter token authentication enabled as a second layer.
+
+Store the connector token outside the repository and all Jupyter mounts:
+
+```bash
+token_path="$HOME/.config/rtx-jupyter/cloudflare-tunnel-token"
+
+install -d -m 0700 "$(dirname "$token_path")"
+install -m 0640 /dev/null "$token_path"
+chown "$(id -u):$(id -g)" "$token_path"
+$EDITOR "$token_path"
+test -s "$token_path"
+```
+
+The Cloudflare overlay grants the non-root connector supplementary access to `NB_GID`. The token is mounted read-only only in cloudflared.
+
+Verify the connector:
+
+```bash
+sudo docker compose ps
+sudo docker compose logs --tail=100 cloudflared
+sudo docker compose exec -T cloudflared cloudflared version
+sudo docker compose exec -T cloudflared \
+  cloudflared tunnel --metrics 127.0.0.1:2000 ready
+```
+
+Acceptance checks:
+
+- An authorized Access identity can reach Jupyter.
+- An unauthorized identity is denied.
+- An unauthenticated browser is redirected to Access.
+- Jupyter still requires its token.
+- Notebook terminals and WebSockets work.
+- Tailscale remains available when its overlay is also selected.
+- Tunnel health alerts and Access authentication logs are enabled in Cloudflare.
+
+One connector already creates multiple edge connections. A replica on another host is optional and does not protect against loss of the only Jupyter origin.
 
 ## Host layouts
 
-The repository defaults are portable relative directories. These are the recommended isolated layouts for Giovan's hosts.
-
-### W4090 testing
+Recommended W4090 testing layout:
 
 ```text
-Repository     /home/giovan/docker-jupyter-testing
-Workspace      /home/giovan/docker-jupyter-testing/workspace
-Data           /mnt/data/giovan/docker-jupyter-testing
-Codex state    /home/giovan/.local/state/rtx-jupyter/testing/codex
-Tunnel token   /home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
+Repository   /home/giovan/docker-jupyter-testing
+Workspace    /home/giovan/docker-jupyter-testing/workspace
+Data         /mnt/data/giovan/docker-jupyter-testing
+Codex state  /home/giovan/.local/state/rtx-jupyter/testing/codex
+Tunnel token /home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
+Project name rtx-jupyter-testing
 ```
 
-Create them without changing ownership of unrelated paths:
+Recommended W4090 production layout:
+
+```text
+Repository   /home/giovan/docker-jupyter
+Workspace    /home/giovan/docker-jupyter/workspace
+Data         /mnt/data/giovan/docker-jupyter
+Codex state  /home/giovan/.local/state/rtx-jupyter/production/codex
+Tunnel token /home/giovan/.config/rtx-jupyter/production/cloudflare-tunnel-token
+Project name rtx-jupyter
+```
+
+W3090 can use `/home/giovan/docker-jupyter/data` when `/mnt/data` is unavailable. Testing and production must not share writable data, Codex state, tunnel credentials, or project names.
+
+## Codex CLI
+
+The image stores the executable under `/opt/codex`; authentication and configuration persist through `CODEX_ROOT`.
 
 ```bash
-sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 \
-  /home/giovan/docker-jupyter-testing/workspace \
-  /mnt/data/giovan/docker-jupyter-testing
-
-install -d -m 0700 \
-  /home/giovan/.local/state/rtx-jupyter/testing/codex \
-  /home/giovan/.config/rtx-jupyter/testing
-
-install -m 0640 /dev/null \
-  /home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
-
-chown "$(id -u):$(id -g)" \
-  /home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
+sudo docker compose exec -it --user jovyan \
+  -w /home/jovyan/work jupyter \
+  codex login --device-auth
 ```
 
-Use these `.env` values:
+Default launchers:
 
-```env
-WORKSPACE_ROOT=/home/giovan/docker-jupyter-testing/workspace
-DATA_ROOT=/mnt/data/giovan/docker-jupyter-testing
-CODEX_ROOT=/home/giovan/.local/state/rtx-jupyter/testing/codex
-CLOUDFLARE_TUNNEL_TOKEN_FILE=/home/giovan/.config/rtx-jupyter/testing/cloudflare-tunnel-token
+```bash
+codex       # gpt-5.6-luna, max reasoning configuration
+codex-plan  # planner profile: gpt-5.6-sol, high reasoning
 ```
 
-Testing and production intentionally do not share writable model data, cache, Codex authentication, or tunnel credentials.
+The startup hook seeds missing config files only. Existing config and auth are never overwritten by restart, recreate, or image upgrade. `/plan` changes the reasoning mode; it does not automatically select the planner profile.
 
-### W4090 production
+## Operations
+
+### Verification
+
+Run normal checks:
+
+```bash
+sudo ./scripts/verify.sh
+```
+
+Also recreate containers and compare Codex config hashes:
+
+```bash
+sudo ./scripts/verify.sh --recreate
+```
+
+GPU acceptance:
+
+```bash
+sudo ./scripts/verify-gpu.sh
+```
+
+### Installed-version report
+
+```bash
+sudo ./scripts/version-report.sh | tee version-report.txt
+```
+
+The report includes the image ID, OS, Python, JupyterLab, PyTorch/CUDA, model dependencies, Codex, cloudflared, and `pip freeze` output.
+
+### Update to latest
+
+Pull the latest tested published images:
+
+```bash
+sudo ./scripts/update.sh pull
+```
+
+Or rebuild every dependency from the latest upstream sources:
+
+```bash
+sudo ./scripts/update.sh build
+```
+
+The script records previous image IDs, registry digests, and a version report under `state/updates/`, recreates the selected services, and runs verification. A running container does not update merely because its image uses the `latest` tag.
+
+Manual rollback example:
+
+```bash
+sudo env IMAGE_NAME=ghcr.io/morpknight/rtx-jupyter@sha256:<previous-repo-digest> \
+  docker compose --env-file .env \
+  up -d --force-recreate --no-build jupyter
+```
+
+### Backup
+
+Default backup includes the workspace and non-secret Codex config:
+
+```bash
+./scripts/backup.sh --destination /path/outside/all-mounted-roots
+```
+
+Include model data explicitly:
+
+```bash
+./scripts/backup.sh \
+  --destination /backup/rtx-jupyter \
+  --include-data
+```
+
+To include the entire Codex state, install `age`, create a key outside the repository, and use its public recipient:
+
+```bash
+age-keygen -o "$HOME/.config/rtx-jupyter/backup-age-key.txt"
+
+./scripts/backup.sh \
+  --destination /backup/rtx-jupyter \
+  --include-codex-state \
+  --age-recipient age1example...
+```
+
+Full Codex state is streamed directly into an encrypted `.age` file. `.env`, Cloudflare tokens, nested `.codex` directories, and plaintext `auth.json` files are excluded from unencrypted archives.
+
+The default backup assumes `config.toml` and `planner.config.toml` contain no inline credentials. Keep secrets in environment variables or use the encrypted full-state option.
+
+Each backup is a timestamped directory with a manifest and SHA-256 checksums.
+
+### Restore
+
+Stop Jupyter first and create empty destination directories matching the current `.env`. Restore refuses non-empty targets and has no force option.
+
+```bash
+sudo docker compose stop jupyter
+
+./scripts/restore.sh \
+  --backup /backup/rtx-jupyter/rtx-jupyter-backup-<timestamp>
+```
+
+For encrypted Codex state:
+
+```bash
+./scripts/restore.sh \
+  --backup /backup/rtx-jupyter/rtx-jupyter-backup-<timestamp> \
+  --age-identity "$HOME/.config/rtx-jupyter/backup-age-key.txt"
+```
+
+Review host ownership after restore before starting the stack.
+
+## CI and image publishing
+
+Pull requests and non-main pushes run:
+
+- Hadolint, ShellCheck, and Gitleaks.
+- All Compose-mode render checks.
+- Real Jupyter HTTP startup with custom UID/GID.
+- Codex config preservation across restart.
+- Trivy reporting for `HIGH` and `CRITICAL` findings.
+- A blocking gate for fixable `CRITICAL` vulnerabilities.
+
+Main, release tags, manual dispatch, and the weekly schedule build and push a unique candidate:
 
 ```text
-Repository     /home/giovan/docker-jupyter
-Workspace      /home/giovan/docker-jupyter/workspace
-Data           /mnt/data/giovan/docker-jupyter
-Codex state    /home/giovan/.local/state/rtx-jupyter/production/codex
-Tunnel token   /home/giovan/.config/rtx-jupyter/production/cloudflare-tunnel-token
+ghcr.io/morpknight/rtx-jupyter:build-<github-run-id>
 ```
 
-Production rollout should occur only after the W4090 testing acceptance checks pass.
+The exact candidate is pulled, tested, scanned, and then promoted to `latest`. BuildKit attaches max-level provenance and an SBOM. If any gate fails, `latest` is not changed.
 
-### W3090 production
+GitHub-hosted runners do not validate NVIDIA passthrough. Run `verify-gpu.sh` on trusted W4090/W3090 hosts before production promotion.
 
-The same image and Compose file can be used. A host without the separate `/mnt/data` filesystem can use:
+## Migrating from the P0 Compose layout
 
-```env
-WORKSPACE_ROOT=/home/giovan/docker-jupyter/workspace
-DATA_ROOT=/home/giovan/docker-jupyter/data
-CODEX_ROOT=/home/giovan/.local/state/rtx-jupyter/production/codex
-CLOUDFLARE_TUNNEL_TOKEN_FILE=/home/giovan/.config/rtx-jupyter/production/cloudflare-tunnel-token
-```
+P1 changes Compose interfaces but not storage contents:
 
-`CODEX_ROOT` must not be nested inside `DATA_ROOT`.
+1. Pull the new repository revision without starting containers.
+2. Add `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE` to `.env`.
+3. Remove any shell alias that forces an obsolete `compose.testing.yaml`.
+4. Keep the existing `WORKSPACE_ROOT`, `DATA_ROOT`, `CODEX_ROOT`, UID/GID, Jupyter token, and Cloudflare token paths.
+5. Render the selected overlays with `docker compose config --quiet`.
+6. Recreate testing and run both verification scripts.
+7. Promote to production only after Cloudflare Access, persistence, and GPU checks pass.
 
-## Configuration
+No data migration is required. Generated container names will change because P1 uses the Compose project name instead of fixed names.
 
-| Variable | Purpose | Portable default |
-| --- | --- | --- |
-| `IMAGE_NAME` | Local or published Jupyter image | `giovan/jupyter-gpu:cu128` |
-| `CLOUDFLARED_IMAGE` | Cloudflare connector image | `cloudflare/cloudflared:latest` |
-| `TAILSCALE_IP` | Host address used for the Jupyter port binding | Required |
-| `NB_UID` | Numeric notebook-user UID | `1000` |
-| `NB_GID` | Numeric notebook-user primary GID | `1000` |
-| `WORKSPACE_ROOT` | Notebook and source workspace | `./workspace` |
-| `DATA_ROOT` | Models, datasets, checkpoints, and HF cache | `./data` |
-| `CODEX_ROOT` | Persistent Codex auth and configuration | `./state/codex` |
-| `JUPYTER_TOKEN` | Jupyter authentication token | Required |
-| `CLOUDFLARE_TUNNEL_TOKEN_FILE` | File containing the tunnel token | `./secrets/cloudflare-tunnel-token` |
+## Security boundaries
 
-`PROJECT_ROOT` is no longer supported. Replace it with `WORKSPACE_ROOT` before recreating the service.
+- Jupyter starts as root only for the official UID/GID initialization, then runs as the mapped notebook user.
+- `jovyan` receives no sudo password, Docker socket, or privileged mode.
+- The repository, `.env`, and tunnel token are not mounted into Jupyter.
+- Cloudflared remains non-root and receives only its read-only token secret.
+- Local mode binds only to loopback; Tailscale binds only to the selected tailnet address.
+- Cloudflare deployments should use both Access and Jupyter authentication.
+- `/home/jovyan/work` is Codex's working directory, not an absolute filesystem sandbox; `/mnt/data` remains accessible by design.
+- Treat Codex auth, Jupyter tokens, age private keys, and tunnel tokens as passwords.
 
-The Jupyter container starts as root only so the inherited Jupyter Docker Stacks `start.sh` can map `jovyan` to `NB_UID:NB_GID` and fix the three mount roots. A startup hook then prepares only the required Jupyter/XDG runtime directories before Jupyter launches as the mapped notebook user. `GRANT_SUDO` is not enabled, and recursive ownership changes are not performed at startup.
+## Troubleshooting
 
-The Cloudflare token is a file-backed Compose secret. Docker Compose preserves the host file ownership for this type of secret, so the connector receives `NB_GID` as a supplementary group and the host file uses mode `0640`. The secret is mounted read-only only in `cloudflared`.
-
-## Verification
-
-### Compose and process state
+Inspect the fully merged configuration first:
 
 ```bash
 sudo docker compose config --quiet
 sudo docker compose config --services
 sudo docker compose ps
-sudo docker compose top jupyter
+sudo docker compose logs --tail=200 jupyter
 ```
 
-Expected services:
-
-```text
-jupyter
-cloudflared
-```
-
-The Jupyter server process shown by `docker compose top` must run as the mapped notebook user, not root. The `cloudflared` service must not publish a host port.
-
-Verify the user and write access:
+If Cloudflare is selected:
 
 ```bash
-sudo docker compose exec -T --user jovyan jupyter \
-  sh -lc '
-    id
-    touch /home/jovyan/work/.p0-write-test
-    touch /mnt/data/.p0-write-test
-    touch "$CODEX_HOME/.p0-write-test"
-    rm /home/jovyan/work/.p0-write-test \
-       /mnt/data/.p0-write-test \
-       "$CODEX_HOME/.p0-write-test"
-    if sudo -n true 2>/dev/null; then
-      echo "unexpected sudo access" >&2
-      exit 1
-    fi
-  '
-```
-
-### Mount and secret isolation
-
-Inspect the actual host sources:
-
-```bash
-sudo docker inspect docker-jupyter \
-  --format '{{range .Mounts}}{{println .Source "->" .Destination "RW=" .RW}}{{end}}'
-```
-
-Only the configured workspace, data, and Codex roots should appear in the Jupyter container. Confirm that the Cloudflare secret target is absent:
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter \
-  sh -lc 'test ! -e /run/secrets/cloudflare_tunnel_token'
-```
-
-Confirm that the secret is read-only in `cloudflared`:
-
-```bash
-sudo docker inspect cloudflared-jupyter \
-  --format '{{range .Mounts}}{{println .Destination "RW=" .RW}}{{end}}'
-
-sudo docker inspect cloudflared-jupyter \
-  --format '{{json .HostConfig.GroupAdd}}'
-```
-
-Expected secret mount:
-
-```text
-/run/secrets/cloudflare_tunnel_token RW= false
-["<NB_GID>"]
-```
-
-### GPU and PyTorch
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter nvidia-smi
-```
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter \
-  python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))'
-```
-
-Expected output includes:
-
-```text
-2.8.0+cu128 12.8 True <GPU name>
-```
-
-### Codex installation and persistence
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter \
-  sh -lc '
-    pwd
-    echo "$CODEX_HOME"
-    command -v codex
-    command -v codex-plan
-    codex --version
-    codex-plan --version
-    ls -l "$CODEX_HOME/config.toml" "$CODEX_HOME/planner.config.toml"
-  '
-```
-
-Record hashes, recreate, and compare them:
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter \
-  sha256sum /home/jovyan/.codex/config.toml \
-            /home/jovyan/.codex/planner.config.toml
-
-sudo docker compose up -d --force-recreate jupyter cloudflared
-
-sudo docker compose exec -T --user jovyan jupyter \
-  sha256sum /home/jovyan/.codex/config.toml \
-            /home/jovyan/.codex/planner.config.toml
-```
-
-The before/after hashes must match. The startup hook only seeds missing files.
-
-### Cloudflare and Tailscale
-
-```bash
-sudo docker compose exec -T cloudflared cloudflared --version
 sudo docker compose logs --tail=200 cloudflared
 sudo docker compose exec -T cloudflared cloudflared tunnel diag
 ```
 
-Use a GET request when testing the public hostname. `curl -I` sends `HEAD`, which Jupyter may answer with `405` even when the route works:
-
-```bash
-curl -sS -D- -o /dev/null https://<cloudflare-hostname>/
-```
-
-Also verify the Tailscale fallback:
-
-```text
-http://<TAILSCALE_IP>:8888/?token=<JUPYTER_TOKEN>
-```
-
-## Codex CLI
-
-The Codex installation and the container account are independent from Codex on the host. Authenticate manually with device code:
-
-```bash
-sudo docker compose exec -it --user jovyan \
-  --workdir /home/jovyan/work jupyter \
-  codex login --device-auth
-```
-
-Check login state without printing the credential file:
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter codex login status
-```
-
-The first startup seeds these defaults only when the corresponding file is absent:
-
-| Use | Command | Model | Reasoning |
-| --- | --- | --- | --- |
-| Normal chat and execution | `codex` | `gpt-5.6-luna` | `max` |
-| `/plan` within a normal session | `/plan` | `gpt-5.6-luna` | `high` |
-| Dedicated planner profile | `codex-plan` | `gpt-5.6-sol` | `high` |
-
-`/plan` changes plan-mode reasoning but does not automatically switch the model. Use `codex-plan` or `codex --profile planner` to start a Sol-backed planner session. Profile files live in `CODEX_HOME` and are selected explicitly with `--profile`, as documented in the [official Codex configuration reference](https://developers.openai.com/codex/config-reference).
-
-> [!WARNING]
-> `model_reasoning_effort = "max"` is intentionally experimental here. The current configuration reference documents values only through `xhigh`. If a future Codex version rejects `max`, do not silently change the deployment to `xhigh`; stop image promotion and decide the migration explicitly.
-
-After login, use `/status` interactively in both `codex` and `codex-plan` to confirm the effective model and reasoning level. Then restart and force-recreate the service and confirm that `codex login status` remains authenticated.
-
-## Cloudflare Tunnel
-
-The `cloudflared` service uses a remotely-managed tunnel:
-
-- Origin: `http://jupyter:8888`.
-- Token source: `TUNNEL_TOKEN_FILE=/run/secrets/cloudflare_tunnel_token`.
-- Host ports: none.
-- GPU access: none.
-- Docker socket, privileged mode, and host networking: none.
-
-The token-file parameter is supported for remotely-managed tunnels by `cloudflared` 2025.4.0 and later. See [Cloudflare Tunnel run parameters](https://developers.cloudflare.com/tunnel/advanced/run-parameters/).
-
-In the Cloudflare Dashboard:
-
-1. Create a separate tunnel for each host and environment.
-2. Route the public hostname to `http://jupyter:8888`.
-3. Create a self-hosted Cloudflare Access application for that hostname.
-4. Add an Allow policy only for intended identities.
-5. Keep Jupyter token authentication enabled as a second layer.
-
-If a token was previously stored under a directory mounted into Jupyter, refresh it in Cloudflare, replace the external token file, and recreate only `cloudflared`.
-
-Rollback does not require stopping Jupyter:
-
-```bash
-sudo docker compose stop cloudflared
-```
-
-Tailscale remains the recovery path.
-
-## Migration from the legacy layout
-
-P0 intentionally changes the storage contract:
-
-- `PROJECT_ROOT` becomes `WORKSPACE_ROOT`.
-- The repository checkout is no longer the notebook workspace.
-- `CODEX_ROOT` must move outside `DATA_ROOT`.
-- The tunnel token should move outside the checkout and all Jupyter mounts.
-
-Do not recreate production until these changes have been prepared.
-
-### Move existing Codex state safely
-
-The old W4090 location was:
-
-```text
-/mnt/data/giovan/docker-jupyter/codex
-```
-
-The new production location is:
-
-```text
-/home/giovan/.local/state/rtx-jupyter/production/codex
-```
-
-Migration procedure:
-
-1. Stop the Jupyter service so auth/config files cannot change during copying.
-2. Create the destination with mode `0700` and the configured `NB_UID:NB_GID` owner.
-3. Copy the old directory with metadata preserved.
-4. Compare source and destination before changing `.env`.
-5. Move the old source to a backup outside `DATA_ROOT`.
-6. Start the new deployment and verify login/config persistence.
-7. Keep the backup until testing, restart, and force-recreate have passed.
-
-Example copy and comparison commands:
-
-```bash
-sudo docker compose stop jupyter
-
-install -d -m 0700 \
-  /home/giovan/.local/state/rtx-jupyter/production/codex
-
-rsync -a \
-  /mnt/data/giovan/docker-jupyter/codex/ \
-  /home/giovan/.local/state/rtx-jupyter/production/codex/
-
-diff -qr \
-  /mnt/data/giovan/docker-jupyter/codex \
-  /home/giovan/.local/state/rtx-jupyter/production/codex
-```
-
-Do not leave the legacy credential directory under `DATA_ROOT`: `/mnt/data` is intentionally accessible to notebooks and Codex. Relocate it to an external backup only after the comparison succeeds.
-
-Existing `config.toml` and `planner.config.toml` files are preserved. Review and merge the desired model defaults manually; the image will not overwrite them.
-
-### Start with an empty workspace
-
-Create `/home/giovan/docker-jupyter/workspace` and copy only the notebooks or projects that should be available in Jupyter. Do not copy the deployment `.env`, `secrets`, or Codex state into the workspace.
-
-## Models and datasets
-
-Models are not baked into the image. Store them below `DATA_ROOT`; they appear at `/mnt/data` in the container.
-
-Example W4090 production mapping:
-
-```text
-Host:      /mnt/data/giovan/docker-jupyter/models/Qwen/Qwen3.5-4B
-Container: /mnt/data/models/Qwen/Qwen3.5-4B
-```
-
-Use `local_files_only=True` when loading a model already present on the host to avoid unexpected downloads.
-
-## Persistence
-
-| Layer | Examples | Survives recreation? |
-| --- | --- | --- |
-| Image | Jupyter, CUDA PyTorch, Transformers, `nvtop`, Codex CLI | Yes |
-| `WORKSPACE_ROOT` | Notebooks and source code | Yes |
-| `DATA_ROOT` | Models, datasets, checkpoints, HF cache | Yes |
-| `CODEX_ROOT` | Codex auth and user configuration | Yes |
-| Container writable layer | Interactive `apt` or `pip` changes | No |
-
-Routine recreation does not reinstall dependencies:
-
-```bash
-sudo docker compose restart
-sudo docker compose up -d --force-recreate jupyter cloudflared
-```
-
-Build or pull a new image only when the image changes.
-
-## Image publishing and CI
-
-`.github/workflows/publish-image.yml` builds `linux/amd64` images for:
-
-```text
-ghcr.io/morpknight/rtx-jupyter
-```
-
-Before publishing, CI now:
-
-- Builds and loads a local smoke-test image.
-- Validates Compose using isolated temporary paths.
-- Runs the inherited startup process as the default notebook user.
-- Verifies first-run Codex config seeding and both Codex launchers.
-- Repeats startup with a non-default UID/GID and writable bind mounts.
-- Publishes only if all CPU-side smoke tests pass.
-
-GitHub-hosted runners do not validate NVIDIA passthrough. GPU, CUDA, Cloudflare, Tailscale, and interactive Codex model checks remain W4090 testing acceptance requirements.
-
-## Security boundaries
-
-- Jupyter runs as the mapped notebook user after root-only startup initialization.
-- `jovyan` has no passwordless sudo and no Docker socket access.
-- Jupyter binds only to `TAILSCALE_IP`, not every host interface.
-- Cloudflare exposure should be protected by Access and Jupyter authentication.
-- The Cloudflare token is available only to `cloudflared`.
-- Codex authentication is intentionally available to Codex through its dedicated state mount.
-- The Jupyter token is an application credential, not a security boundary from code already running inside the Jupyter container.
-- `/home/jovyan/work` is Codex's working directory, not an absolute filesystem sandbox; `/mnt/data` remains accessible by design.
-- Fixed `container_name` values mean production and testing need different local overrides if they run simultaneously on one Docker host.
-
-## Troubleshooting
-
-### Compose reports a missing bind source
-
-This is expected when a configured directory does not exist. Create exactly the missing `WORKSPACE_ROOT`, `DATA_ROOT`, or `CODEX_ROOT` path, then rerun:
-
-```bash
-sudo docker compose config --quiet
-sudo docker compose up -d
-```
-
-### Codex config is not updated after rebuilding
-
-The startup hook never overwrites existing files. Inspect `CODEX_ROOT/config.toml` and `CODEX_ROOT/planner.config.toml`, back them up, and merge changes explicitly.
-
-### A mount is not writable
-
-Check the host UID/GID and mount root:
-
-```bash
-id -u
-id -g
-sudo docker compose exec -T --user jovyan jupyter id
-sudo docker inspect docker-jupyter \
-  --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
-```
-
-Correct ownership only on the intended mount. Do not recursively chown `/mnt/data`, `/home`, or another broad host directory.
-
-If the log specifically mentions `/home/jovyan/.local/share`, rebuild the image so the `05-prepare-jupyter-dirs` startup hook is present. The hook repairs only the required Jupyter/XDG runtime directories after UID/GID mapping.
-
-### Cloudflared cannot read the tunnel token
-
-File-backed Compose secrets preserve host ownership. Confirm that the token group matches `NB_GID`, that group-read is enabled, and that Compose passed the same group to the connector:
-
-```bash
-token_path=/path/from/CLOUDFLARE_TUNNEL_TOKEN_FILE
-stat -c '%a %u:%g %n' "$token_path"
-sudo docker inspect cloudflared-jupyter \
-  --format '{{json .HostConfig.GroupAdd}}'
-```
-
-For `NB_UID=1002` and `NB_GID=1002`, the expected values are `640 1002:1002` and `["1002"]`. Correct only the token file:
-
-```bash
-chown "$(id -u):$(id -g)" "$token_path"
-chmod 0640 "$token_path"
-sudo docker compose up -d --force-recreate cloudflared
-```
-
-### CUDA is unavailable
-
-Validate the host runtime first, then inspect PyTorch inside the actual Compose service:
-
-```bash
-sudo docker run --rm --gpus all \
-  nvidia/cuda:12.9.0-base-ubuntu22.04 \
-  nvidia-smi
-
-sudo docker compose exec -T --user jovyan jupyter \
-  python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())'
-```
-
-### Cloudflare returns `502`
-
-Confirm that both services share the same Compose network and that the remotely-managed route uses exactly `http://jupyter:8888`.
-
-Origin test:
-
-```bash
-sudo docker compose exec -T --user jovyan jupyter \
-  curl -sS -D- -o /dev/null http://127.0.0.1:8888
-```
-
-The official `cloudflare/cloudflared` image has no shell. Use its binary and logs directly:
-
-```bash
-sudo docker compose exec -T cloudflared cloudflared --version
-sudo docker compose logs --tail=200 cloudflared
-```
+Common causes:
+
+- `TAILSCALE_IP` is required only when the Tailscale overlay is selected.
+- The Cloudflare token path is required only when the Cloudflare overlay is selected.
+- Bind roots must exist before Compose starts.
+- Token mode should be `0640` with owner/group matching `NB_UID:NB_GID`.
+- `cloudflared` has no shell; use its binary, healthcheck, and logs directly.
+- A healthy tunnel proves edge connectivity, not origin routing or Access policy correctness.
+- CUDA device visibility does not prove PyTorch CUDA; run `verify-gpu.sh`.
 
 ## References
 
 - [Jupyter Docker Stacks](https://github.com/jupyter/docker-stacks)
+- [Docker Compose project names](https://docs.docker.com/compose/how-tos/project-name/)
+- [Docker Compose merge and overlays](https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/)
 - [Docker Compose GPU support](https://docs.docker.com/compose/how-tos/gpu-support/)
-- [Docker Compose bind mounts](https://docs.docker.com/reference/compose-file/services/#volumes)
-- [Docker Compose secrets](https://docs.docker.com/reference/compose-file/services/#secrets)
+- [Docker build attestations](https://docs.docker.com/build/ci/github-actions/attestations/)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/)
-- [PyTorch previous versions](https://pytorch.org/get-started/previous-versions/)
+- [PyTorch CUDA wheels](https://pytorch.org/get-started/locally/)
 - [Codex CLI](https://developers.openai.com/codex/cli/)
-- [Codex configuration reference](https://developers.openai.com/codex/config-reference)
-- [Cloudflare Tunnel permissions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/remote-tunnel-permissions/)
-- [Cloudflare Tunnel run parameters](https://developers.cloudflare.com/tunnel/advanced/run-parameters/)
+- [Codex configuration](https://developers.openai.com/codex/config-reference)
+- [Cloudflare Tunnel availability](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-availability/)
 - [Cloudflare Access self-hosted applications](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
-- [Tailscale documentation](https://tailscale.com/kb)

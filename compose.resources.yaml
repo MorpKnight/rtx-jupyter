@@ -1,0 +1,7 @@
+services:
+  jupyter:
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-8}"
+          memory: "${MEMORY_LIMIT:-32g}"
