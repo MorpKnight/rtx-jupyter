@@ -57,6 +57,47 @@ run_compose_config() {
     env "${common_env[@]}" "$@" docker compose config --format json
 }
 
+wait_for_http() {
+    local attempts=36
+    local container_state
+    local host_port
+
+    while ((attempts > 0)); do
+        container_state="$(
+            docker inspect "${container_name}" \
+                --format '{{.State.Status}}' 2>/dev/null || true
+        )"
+        if [[ "${container_state}" == "exited" || "${container_state}" == "dead" ]]; then
+            echo "Container entered terminal state: ${container_state}" >&2
+            docker logs "${container_name}" >&2 || true
+            return 1
+        fi
+
+        # Docker may assign a different ephemeral host port when the container
+        # network is recreated, so resolve it again on every attempt.
+        host_port="$(
+            docker port "${container_name}" 8888/tcp 2>/dev/null \
+                | awk -F: 'NR == 1 {print $NF}' || true
+        )"
+        if [[ -n "${host_port}" ]] \
+            && curl --fail --silent \
+                "http://127.0.0.1:${host_port}/" >/dev/null; then
+            echo "Jupyter HTTP ready on host port ${host_port}."
+            return 0
+        fi
+
+        sleep 5
+        attempts=$((attempts - 1))
+    done
+
+    echo "Timed out waiting for Jupyter HTTP endpoint" >&2
+    docker inspect "${container_name}" \
+        --format 'state={{.State.Status}} ports={{json .NetworkSettings.Ports}}' \
+        >&2 || true
+    docker logs "${container_name}" >&2 || true
+    return 1
+}
+
 local_json="$(
     cd "${repo_root}"
     run_compose_config \
@@ -130,16 +171,7 @@ docker run -d \
     --publish 127.0.0.1::8888 \
     "${image_ref}" >/dev/null
 
-host_port="$(docker port "${container_name}" 8888/tcp | awk -F: 'NR == 1 {print $NF}')"
-attempts=36
-until curl --fail --silent --show-error "http://127.0.0.1:${host_port}/" >/dev/null; do
-    if ((attempts == 0)); then
-        docker logs "${container_name}" >&2
-        exit 1
-    fi
-    sleep 5
-    attempts=$((attempts - 1))
-done
+wait_for_http
 
 before_hashes="$(docker exec --user 1234:1234 "${container_name}" \
     sha256sum /home/jovyan/.codex/config.toml /home/jovyan/.codex/planner.config.toml)"
@@ -170,15 +202,7 @@ docker exec --user 1234:1234 "${container_name}" bash -lc '
 '
 
 docker restart "${container_name}" >/dev/null
-attempts=36
-until curl --fail --silent --show-error "http://127.0.0.1:${host_port}/" >/dev/null; do
-    if ((attempts == 0)); then
-        docker logs "${container_name}" >&2
-        exit 1
-    fi
-    sleep 5
-    attempts=$((attempts - 1))
-done
+wait_for_http
 
 after_hashes="$(docker exec --user 1234:1234 "${container_name}" \
     sha256sum /home/jovyan/.codex/config.toml /home/jovyan/.codex/planner.config.toml)"
